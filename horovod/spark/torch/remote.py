@@ -231,7 +231,9 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 cache_in_loader_memory=cache_in_loader_memory,
                 cache_size_limit=cache_size_limit,
                 cache_row_size_estimate=cache_row_size_estimate,
-                shuffling_queue_capacity=shuffle_buffer_size) as train_loader_iter:
+                shuffling_queue_capacity=shuffle_buffer_size) as train_loader:
+
+                train_loader_it = iter(train_loader)
 
                 with make_torch_reader_and_loader(remote_store.val_data_path,
                                                   num_epochs=None,
@@ -245,7 +247,9 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                                                   cache_in_loader_memory=cache_in_loader_memory,
                                                   cache_size_limit=cache_size_limit,
                                                   cache_row_size_estimate=cache_row_size_estimate) \
-                    if should_validate else empty_batch_reader() as val_loader_iter:
+                    if should_validate else empty_batch_reader() as val_loader_loader:
+
+                    val_loader_iter = iter(val_loader_loader)
 
                     def prepare_batch(row):
                         inputs = [
@@ -316,7 +320,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
 
                         # iterate on one epoch
                         for batch_idx in range(steps_per_epoch):
-                            row = next(train_loader_iter)
+                            row = next(train_loader_it)
                             inputs, labels, sample_weights = prepare_batch(row)
                             outputs, loss = train_minibatch(model, optimizer, transform_outputs,
                                                             loss_fn, inputs, labels, sample_weights)
