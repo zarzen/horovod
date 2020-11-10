@@ -18,7 +18,6 @@ import os
 
 import contextlib
 import math
-import system
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
@@ -57,7 +56,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
     loss_constructors = to_list(estimator.getLossConstructors(), num_labels)
     transformation_fn = estimator.getTransformationFn()
     transformation = transformation_fn if transformation_fn else None
-    cache_data_in_memory = estimator.getCacheDataInMemory()
+    in_memory_cache_size = estimator.getInMemoryCacheSize()
 
     # If loss weight is not provided, use equal loss for all the labels
     loss_weights = estimator.getLossWeights()
@@ -202,16 +201,9 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 if cuda_available:
                     model.cuda()
 
-            if cache_data_in_memory:
+            if in_memory_cache_size:
                 shuffle_buffer_size = 0
-                cache_in_loader_memory = True
-                # Setting this values caches everything in memory.
-                cache_size_limit = system.maxint
-                cache_row_size_estimate = 1
-            else:
-                cache_in_loader_memory = False
-                cache_size_limit = 0
-                cache_row_size_estimate = 1
+                in_memory_cache_size = 1000000000
 
             # Petastorm: read data from the store with the correct shard for this rank
             # setting num_epochs=None will cause an infinite iterator
@@ -228,9 +220,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 schema_fields=schema_fields,
                 transform_spec=transform_spec,
                 batch_size=batch_size,
-                cache_in_loader_memory=cache_in_loader_memory,
-                cache_size_limit=cache_size_limit,
-                cache_row_size_estimate=cache_row_size_estimate,
+                in_memory_cache_size=in_memory_cache_size,
                 shuffling_queue_capacity=shuffle_buffer_size) as train_loader:
 
                 train_loader_it = iter(train_loader)
