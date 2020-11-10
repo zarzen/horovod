@@ -94,8 +94,8 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
 
     def train(serialized_model, optimizer_cls, model_opt_state_serialized,
               train_rows, val_rows, avg_row_size):
-        from petastorm import TransformSpec, make_reader, make_batch_reader
-        from petastorm.pytorch import BatchedDataLoader
+        from petastorm import TransformSpec
+        from petastorm.pytorch import BatchedDataLoader, make_torch_reader_and_loader
         import torch
         import horovod.torch as hvd
 
@@ -200,48 +200,33 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 if cuda_available:
                     model.cuda()
 
-            # In general, make_batch_reader is faster than make_reader for reading the dataset.
-            # However, we found out that make_reader performs data transformations much faster than
-            # make_batch_reader with parallel worker processes. Therefore, the default reader
-            # we choose is make_batch_reader unless there are data transformations.
-            reader_factory = None
-            reader_factory_kwargs = dict()
-            if transform_spec:
-                reader_factory = make_reader
-                reader_factory_kwargs['pyarrow_serialize'] = True
-            else:
-                reader_factory = make_batch_reader
-
             # Petastorm: read data from the store with the correct shard for this rank
             # setting num_epochs=None will cause an infinite iterator
             # and enables ranks to perform training and validation with
             # unequal number of samples
-            with reader_factory(remote_store.train_data_path,
-                                num_epochs=None,
-                                cur_shard=hvd.rank(),
-                                reader_pool_type='process',
-                                workers_count=train_reader_worker_count,
-                                shard_count=hvd.size(),
-                                hdfs_driver=PETASTORM_HDFS_DRIVER,
-                                schema_fields=schema_fields,
-                                transform_spec=transform_spec,
-                                **reader_factory_kwargs) as train_reader:
-                with reader_factory(remote_store.val_data_path,
-                                    num_epochs=None,
-                                    cur_shard=hvd.rank(),
-                                    reader_pool_type='process',
-                                    workers_count=val_reader_worker_count,
-                                    shard_count=hvd.size(),
-                                    hdfs_driver=PETASTORM_HDFS_DRIVER,
-                                    schema_fields=schema_fields,
-                                    transform_spec=transform_spec,
-                                    **reader_factory_kwargs) \
-                    if should_validate else empty_batch_reader() as val_reader:
+            with make_torch_reader_and_loader(
+                remote_store.train_data_path,
+                num_epochs=None,
+                cur_shard=hvd.rank(),
+                reader_pool_type='process',
+                workers_count=train_reader_worker_count,
+                shard_count=hvd.size(),
+                hdfs_driver=PETASTORM_HDFS_DRIVER,
+                schema_fields=schema_fields,
+                transform_spec=transform_spec,
+                batch_size=batch_size,
+                shuffling_queue_capacity=shuffle_buffer_size) as train_loader_iter:
 
-                    train_loader = BatchedDataLoader(train_reader,
-                                                     batch_size=batch_size,
-                                                     shuffling_queue_capacity=shuffle_buffer_size)
-                    train_loader_iter = iter(train_loader)
+                with make_torch_reader_and_loader(remote_store.val_data_path,
+                                                  num_epochs=None,
+                                                  cur_shard=hvd.rank(),
+                                                  reader_pool_type='process',
+                                                  workers_count=val_reader_worker_count,
+                                                  shard_count=hvd.size(),
+                                                  hdfs_driver=PETASTORM_HDFS_DRIVER,
+                                                  schema_fields=schema_fields,
+                                                  transform_spec=transform_spec) \
+                    if should_validate else empty_batch_reader() as val_loader_iter:
 
                     def prepare_batch(row):
                         inputs = [
@@ -323,8 +308,6 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                         return aggregate_metrics('train', epoch, train_loss, metric_value_groups)
 
                     if should_validate:
-                        val_loader = BatchedDataLoader(val_reader, batch_size=batch_size)
-                        val_loader_iter = iter(val_loader)
                         if validation_steps_per_epoch is None:
                             validation_steps = int(math.ceil(float(val_rows) / batch_size / hvd.size()))
                         else:
