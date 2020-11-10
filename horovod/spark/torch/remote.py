@@ -13,17 +13,17 @@
 # limitations under the License.
 # ==============================================================================
 
+import contextlib
 import io
+import math
 import os
 
-import contextlib
-import math
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from horovod.spark.common import constants
-from horovod.spark.common.store import DBFSLocalStore
 from horovod.spark.common.util import _get_assigned_gpu_or_default, to_list
+from horovod.spark.common.store import DBFSLocalStore
 from horovod.spark.torch.util import deserialize_fn
 
 PETASTORM_HDFS_DRIVER = constants.PETASTORM_HDFS_DRIVER
