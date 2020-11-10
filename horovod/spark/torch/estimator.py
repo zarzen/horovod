@@ -143,6 +143,8 @@ class TorchEstimator(HorovodEstimator, TorchEstimatorParamsWritable,
     train_minibatch_fn = Param(Params._dummy(), 'train_minibatch_fn',
                                'functions that construct the minibatch train function for torch')
 
+    cache_data_in_memory = Param(Params._dummy(), 'cache_data_in_memory', 'cache data in memory')
+
     @keyword_only
     def __init__(self,
                  num_proc=None,
@@ -173,13 +175,15 @@ class TorchEstimator(HorovodEstimator, TorchEstimatorParamsWritable,
                  transformation_fn=None,
                  train_reader_num_workers=None,
                  val_reader_num_workers=None,
-                 label_shapes=None):
+                 label_shapes=None,
+                 cache_data_in_memory=False):
 
         super(TorchEstimator, self).__init__()
         self._setDefault(loss_constructors=None,
                          input_shapes=None,
                          train_minibatch_fn=None,
-                         transformation_fn=None)
+                         transformation_fn=None,
+                         cache_data_in_memory=False)
 
         kwargs = self._input_kwargs
 
@@ -205,6 +209,12 @@ class TorchEstimator(HorovodEstimator, TorchEstimatorParamsWritable,
 
     def getLossConstructors(self):
         return self.getOrDefault(self.loss_constructors)
+
+    def setCacheDataInMemory(self, value):
+        return self._set(cache_data_in_memory=value)
+
+    def getCacheDataInMemory(self):
+        return self.getOrDefault(self.cache_data_in_memory)
 
     def _get_optimizer(self):
         return self.getOrDefault(self.optimizer)

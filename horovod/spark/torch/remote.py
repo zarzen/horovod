@@ -13,17 +13,18 @@
 # limitations under the License.
 # ==============================================================================
 
-import contextlib
 import io
-import math
 import os
 
+import contextlib
+import math
+import system
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from horovod.spark.common import constants
-from horovod.spark.common.util import _get_assigned_gpu_or_default, to_list
 from horovod.spark.common.store import DBFSLocalStore
+from horovod.spark.common.util import _get_assigned_gpu_or_default, to_list
 from horovod.spark.torch.util import deserialize_fn
 
 PETASTORM_HDFS_DRIVER = constants.PETASTORM_HDFS_DRIVER
@@ -56,6 +57,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
     loss_constructors = to_list(estimator.getLossConstructors(), num_labels)
     transformation_fn = estimator.getTransformationFn()
     transformation = transformation_fn if transformation_fn else None
+    cache_data_in_memory = estimator.getCacheDataInMemory()
 
     # If loss weight is not provided, use equal loss for all the labels
     loss_weights = estimator.getLossWeights()
@@ -95,7 +97,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
     def train(serialized_model, optimizer_cls, model_opt_state_serialized,
               train_rows, val_rows, avg_row_size):
         from petastorm import TransformSpec
-        from petastorm.pytorch import BatchedDataLoader, make_torch_reader_and_loader
+        from petastorm.pytorch import make_torch_reader_and_loader
         import torch
         import horovod.torch as hvd
 
@@ -200,6 +202,17 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 if cuda_available:
                     model.cuda()
 
+            if cache_data_in_memory:
+                shuffle_buffer_size = 0
+                cache_in_loader_memory = True
+                # Setting this values caches everything in memory.
+                cache_size_limit = system.maxint
+                cache_row_size_estimate = 1
+            else:
+                cache_in_loader_memory = False
+                cache_size_limit = 0
+                cache_row_size_estimate = 1
+
             # Petastorm: read data from the store with the correct shard for this rank
             # setting num_epochs=None will cause an infinite iterator
             # and enables ranks to perform training and validation with
@@ -215,6 +228,9 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 schema_fields=schema_fields,
                 transform_spec=transform_spec,
                 batch_size=batch_size,
+                cache_in_loader_memory=cache_in_loader_memory,
+                cache_size_limit=cache_size_limit,
+                cache_row_size_estimate=cache_row_size_estimate,
                 shuffling_queue_capacity=shuffle_buffer_size) as train_loader_iter:
 
                 with make_torch_reader_and_loader(remote_store.val_data_path,
@@ -225,7 +241,10 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                                                   shard_count=hvd.size(),
                                                   hdfs_driver=PETASTORM_HDFS_DRIVER,
                                                   schema_fields=schema_fields,
-                                                  transform_spec=transform_spec) \
+                                                  transform_spec=transform_spec,
+                                                  cache_in_loader_memory=cache_in_loader_memory,
+                                                  cache_size_limit=cache_size_limit,
+                                                  cache_row_size_estimate=cache_row_size_estimate) \
                     if should_validate else empty_batch_reader() as val_loader_iter:
 
                     def prepare_batch(row):
