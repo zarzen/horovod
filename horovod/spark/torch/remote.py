@@ -113,7 +113,9 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
         # Horovod: initialize library.
         hvd.init()
 
-        if not user_shuffle_buffer_size:
+        if in_memory_cache_size:
+            shuffle_buffer_size = 0
+        elif not user_shuffle_buffer_size:
             shuffle_buffer_size = \
                 calculate_shuffle_buffer_size(hvd, avg_row_size, train_rows / hvd.size())
         else:
@@ -201,10 +203,6 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 if cuda_available:
                     model.cuda()
 
-            if in_memory_cache_size:
-                shuffle_buffer_size = 0
-                in_memory_cache_size = 1000000000
-
             # Petastorm: read data from the store with the correct shard for this rank
             # setting num_epochs=None will cause an infinite iterator
             # and enables ranks to perform training and validation with
@@ -234,12 +232,8 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                                                   hdfs_driver=PETASTORM_HDFS_DRIVER,
                                                   schema_fields=schema_fields,
                                                   transform_spec=transform_spec,
-                                                  cache_in_loader_memory=cache_in_loader_memory,
-                                                  cache_size_limit=cache_size_limit,
-                                                  cache_row_size_estimate=cache_row_size_estimate) \
+                                                  in_memory_cache_size=in_memory_cache_size) \
                     if should_validate else empty_batch_reader() as val_loader_loader:
-
-                    val_loader_iter = iter(val_loader_loader)
 
                     def prepare_batch(row):
                         inputs = [
@@ -321,6 +315,8 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                         return aggregate_metrics('train', epoch, train_loss, metric_value_groups)
 
                     if should_validate:
+                        val_loader_iter = iter(val_loader_loader)
+
                         if validation_steps_per_epoch is None:
                             validation_steps = int(math.ceil(float(val_rows) / batch_size / hvd.size()))
                         else:
