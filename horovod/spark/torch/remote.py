@@ -209,7 +209,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
             # unequal number of samples
             with make_torch_reader_and_loader(
                 remote_store.train_data_path,
-                num_epochs=None,
+                num_epochs=epochs,
                 cur_shard=hvd.rank(),
                 reader_pool_type='process',
                 workers_count=train_reader_worker_count,
@@ -224,7 +224,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                 train_loader_it = iter(train_loader)
 
                 with make_torch_reader_and_loader(remote_store.val_data_path,
-                                                  num_epochs=None,
+                                                  num_epochs=epochs,
                                                   cur_shard=hvd.rank(),
                                                   reader_pool_type='process',
                                                   workers_count=val_reader_worker_count,
