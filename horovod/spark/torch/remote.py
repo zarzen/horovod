@@ -182,7 +182,7 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
             schema_fields.append(sample_weight_col)
 
         if train_steps_per_epoch is None:
-            steps_per_epoch = int(math.ceil(float(train_rows) / batch_size / hvd.size()))
+            steps_per_epoch = int(math.floor(float(train_rows) / batch_size / hvd.size()))
         else:
             steps_per_epoch = train_steps_per_epoch
 
