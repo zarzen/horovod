@@ -17,6 +17,7 @@ import contextlib
 import io
 import math
 import os
+from datetime import datetime, timezone
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -355,7 +356,9 @@ def RemoteTrainer(estimator, metadata, last_checkpoint_state, run_id, dataset_id
                             epoch_metrics['validation'] = _validate(epoch)
 
                         if user_verbose > 0:
-                            print(epoch_metrics)
+                            pdt_dt = datetime.now(timezone.utc)
+                            pdt_time_str = pdt_dt.strftime("%Y-%b-%d %H:%M:%S UTC")
+                            print(pdt_time_str, epoch_metrics)
 
                         history.append(epoch_metrics)
                         if hvd.rank() == 0:
