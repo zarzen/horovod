@@ -20,6 +20,7 @@ ARG PYSPARK_PACKAGE=pyspark==2.4.7
 ARG SPARK_PACKAGE=spark-2.4.7/spark-2.4.7-bin-hadoop2.7.tgz
 ARG HOROVOD_BUILD_FLAGS="HOROVOD_GPU_OPERATIONS=NCCL"
 ARG HOROVOD_MIXED_INSTALL=0
+ARG HOROVOD_MXNET_FLAG="HOROVOD_WITH_MXNET=1"
 
 # Set default shell to /bin/bash
 SHELL ["/bin/bash", "-cu"]
@@ -119,21 +120,18 @@ RUN pip install "Pillow<7.0" --no-deps
 
 # Install MXNet.
 # Optionally skip until CUDA 11.0 support is available.
-RUN if [[ ${MXNET_PACKAGE} == "None" ]]; then \
-        export HOROVOD_WITHOUT_MXNET=1; \
-    else \
+RUN if [[ ${MXNET_PACKAGE} != "None" ]]; then \
         if [[ ${MXNET_PACKAGE} == "mxnet-nightly" ]]; then \
             pip install --pre mxnet-cu101 -f https://dist.mxnet.io/python/all; \
         else \
             pip install ${MXNET_PACKAGE}; \
         fi \
-        export HOROVOD_WITH_MXNET=1; \
     fi
 
 # Install Horovod.
 RUN cd /horovod && python setup.py sdist
 RUN ldconfig /usr/local/cuda/targets/x86_64-linux/lib/stubs && \
-    bash -c "${HOROVOD_BUILD_FLAGS} HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 pip install -v $(ls /horovod/dist/horovod-*.tar.gz)[spark,ray]" && \
+    bash -c "${HOROVOD_BUILD_FLAGS} ${HOROVOD_MXNET_FLAG} HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 pip install -v $(ls /horovod/dist/horovod-*.tar.gz)[spark,ray]" && \
     ldconfig
 
 # Hack for compatibility of MNIST example with TensorFlow 1.1.0.
