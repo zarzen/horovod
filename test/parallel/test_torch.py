@@ -77,7 +77,7 @@ class TorchTests(unittest.TestCase):
 
     def test_gpu_required(self):
         if not torch.cuda.is_available():
-            skip_or_fail_gpu_test("No GPUs available")
+            skip_or_fail_gpu_test(self, "No GPUs available")
 
     def test_horovod_reinit(self):
         """Test that Horovod can init -> shutdown -> init successfully."""
