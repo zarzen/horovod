@@ -118,16 +118,22 @@ RUN PYTORCH_CUDA=$(echo ${CUDA_DOCKER_VERSION} | awk -F- '{print $1}' | sed 's/\
 RUN pip install "Pillow<7.0" --no-deps
 
 # Install MXNet.
-RUN if [[ ${MXNET_PACKAGE} == "mxnet-nightly" ]]; then \
-        pip install --pre mxnet-cu101 -f https://dist.mxnet.io/python/all; \
+# Optionally skip until CUDA 11.0 support is available.
+RUN if [[ ${MXNET_PACKAGE} == "None" ]]; then \
+        export HOROVOD_WITHOUT_MXNET=1; \
     else \
-        pip install ${MXNET_PACKAGE} ; \
+        if [[ ${MXNET_PACKAGE} == "mxnet-nightly" ]]; then \
+            pip install --pre mxnet-cu101 -f https://dist.mxnet.io/python/all; \
+        else \
+            pip install ${MXNET_PACKAGE}; \
+        fi \
+        export HOROVOD_WITH_MXNET=1; \
     fi
 
 # Install Horovod.
 RUN cd /horovod && python setup.py sdist
 RUN ldconfig /usr/local/cuda/targets/x86_64-linux/lib/stubs && \
-    bash -c "${HOROVOD_BUILD_FLAGS} HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 HOROVOD_WITH_MXNET=1 pip install -v $(ls /horovod/dist/horovod-*.tar.gz)[spark,ray]" && \
+    bash -c "${HOROVOD_BUILD_FLAGS} HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 pip install -v $(ls /horovod/dist/horovod-*.tar.gz)[spark,ray]" && \
     ldconfig
 
 # Hack for compatibility of MNIST example with TensorFlow 1.1.0.
