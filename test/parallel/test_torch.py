@@ -156,7 +156,7 @@ class TorchTests(unittest.TestCase):
             torch.manual_seed(1234)
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
-            summed = hvd.allreduce(tensor, average=False)
+            summed = hvd.allreduce(tensor, op=hvd.Sum)
             tensor, summed = self.convert_cpu_fp16_to_fp32(tensor, summed)
             multiplied = tensor * size
 
@@ -189,7 +189,7 @@ class TorchTests(unittest.TestCase):
             torch.manual_seed(1234)
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
-            averaged = hvd.allreduce(tensor, average=True)
+            averaged = hvd.allreduce(tensor, op=hvd.Sum)
 
             # Threshold for floating point equality depends on number of
             # ranks, since we're comparing against precise multiplication.
@@ -221,7 +221,7 @@ class TorchTests(unittest.TestCase):
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             multiplied = self.cast_and_place(tensor * size, dtype)
             tensor = self.cast_and_place(tensor, dtype)
-            hvd.allreduce_(tensor, average=False)
+            hvd.allreduce_(tensor, op=hvd.Sum)
             tensor, multiplied = self.convert_cpu_fp16_to_fp32(tensor, multiplied)
 
             # Threshold for floating point equality depends on number of
@@ -256,7 +256,7 @@ class TorchTests(unittest.TestCase):
             torch.manual_seed(1234)
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
-            handle = hvd.allreduce_async(tensor, average=False)
+            handle = hvd.allreduce_async(tensor, op=hvd.Sum)
             if not hvd.poll(handle):
                 is_hvd_poll_false_once = True
             tensor, = self.convert_cpu_fp16_to_fp32(tensor)
@@ -311,7 +311,7 @@ class TorchTests(unittest.TestCase):
             device = local_rank * 2 + (iter + local_rank) % 2
             tensor = tensor.cuda(device).type(dtype)
             multiplied = tensor * size
-            hvd.allreduce_(tensor, average=False)
+            hvd.allreduce_(tensor, op=hvd.Sum)
 
             # Threshold for floating point equality depends on number of
             # ranks, since we're comparing against precise multiplication.
@@ -347,7 +347,7 @@ class TorchTests(unittest.TestCase):
             factor = np.random.uniform()
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
-            summed = hvd.allreduce(tensor, average=False,
+            summed = hvd.allreduce(tensor, op=hvd.Sum,
                                    prescale_factor=factor)
 
             factor = torch.tensor(factor, dtype=torch.float64)
@@ -401,7 +401,7 @@ class TorchTests(unittest.TestCase):
             factor = np.random.uniform()
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
-            summed = hvd.allreduce(tensor, average=False,
+            summed = hvd.allreduce(tensor, op=hvd.Sum,
                                    postscale_factor=factor)
 
             factor = torch.tensor(factor, dtype=torch.float64)
@@ -559,7 +559,7 @@ class TorchTests(unittest.TestCase):
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
             tensor.requires_grad_()
-            summed = hvd.allreduce(tensor, average=False)
+            summed = hvd.allreduce(tensor, op=hvd.Sum)
 
             summed.backward(self.cast_and_place(torch.ones([17] * dim), dtype))
             grad_out = tensor.grad.data.cpu().numpy()
@@ -583,7 +583,7 @@ class TorchTests(unittest.TestCase):
             tensor = torch.FloatTensor(*([17] * dim)).random_(-100, 100)
             tensor = self.cast_and_place(tensor, dtype)
             tensor.requires_grad_()
-            summed = hvd.allreduce(tensor, average=True)
+            summed = hvd.allreduce(tensor, op=hvd.Average)
 
             summed.backward(self.cast_and_place(torch.ones([17] * dim), dtype))
             grad_out = tensor.grad.data.cpu().numpy()
@@ -609,7 +609,7 @@ class TorchTests(unittest.TestCase):
             torch.manual_seed(1234)
             tensors = [torch.FloatTensor(*([17] * dim)).random_(-100, 100) for _ in range(5)]
             tensors = [self.cast_and_place(tensor, dtype) for tensor in tensors]
-            summed = hvd.grouped_allreduce(tensors, average=False)
+            summed = hvd.grouped_allreduce(tensors, op=hvd.Sum)
             tensors, summed = zip(*[self.convert_cpu_fp16_to_fp32(t, s) for t, s in zip(tensors, summed)])
             multiplied = [tensor * size for tensor in tensors]
 
@@ -643,7 +643,7 @@ class TorchTests(unittest.TestCase):
             torch.manual_seed(1234)
             tensors = [torch.FloatTensor(*([17] * dim)).random_(-100, 100) for _ in range(5)]
             tensors = [self.cast_and_place(tensor, dtype) for tensor in tensors]
-            averaged = hvd.grouped_allreduce(tensors, average=True)
+            averaged = hvd.grouped_allreduce(tensors, op=hvd.Average)
             tensors, averaged = zip(*[self.convert_cpu_fp16_to_fp32(t, m) for t, m in zip(tensors, averaged)])
 
             # Threshold for floating point equality depends on number of
@@ -677,7 +677,7 @@ class TorchTests(unittest.TestCase):
             tensors = [torch.FloatTensor(*([17] * dim)).random_(-100, 100) for _ in range(5)]
             multiplied = [self.cast_and_place(tensor * size, dtype) for tensor in tensors]
             tensors = [self.cast_and_place(tensor, dtype) for tensor in tensors]
-            hvd.grouped_allreduce_(tensors, average=False)
+            hvd.grouped_allreduce_(tensors, op=hvd.Sum)
             tensors, multiplied = zip(*[self.convert_cpu_fp16_to_fp32(t, m) for t, m in zip(tensors, multiplied)])
 
             # Threshold for floating point equality depends on number of
@@ -705,7 +705,7 @@ class TorchTests(unittest.TestCase):
         hvd.init()
         tensors = [torch.FloatTensor(10) if i % 2 else torch.cuda.FloatTensor(10)  for i in range(5)]
         try:
-            hvd.grouped_allreduce(tensors, average=False)
+            hvd.grouped_allreduce(tensors, op=hvd.Sum)
             assert False, 'hvd.allreduce did not throw error'
         except (torch.FatalError, RuntimeError):
             pass
@@ -725,7 +725,7 @@ class TorchTests(unittest.TestCase):
             tensors = [self.cast_and_place(tensor, dtype) for tensor in tensors]
             for tensor in tensors:
                 tensor.requires_grad_()
-            summed = hvd.grouped_allreduce(tensors, average=False)
+            summed = hvd.grouped_allreduce(tensors, op=hvd.Sum)
 
             for s in summed:
                 s.backward(self.cast_and_place(torch.ones([17] * dim), dtype))
@@ -753,7 +753,7 @@ class TorchTests(unittest.TestCase):
             tensors = [self.cast_and_place(tensor, dtype) for tensor in tensors]
             for tensor in tensors:
                 tensor.requires_grad_()
-            summed = hvd.grouped_allreduce(tensors, average=True)
+            summed = hvd.grouped_allreduce(tensors, op=hvd.Average)
 
             for s in summed:
                 s.backward(self.cast_and_place(torch.ones([17] * dim), dtype))
@@ -2110,8 +2110,8 @@ class TorchTests(unittest.TestCase):
             tensor_b = self.cast_and_place(tensor_b, dtype)
 
             if caching:
-                handle_a = hvd.allreduce_async(tensor_a, name="tensor_a", average=True)
-                handle_b = hvd.allreduce_async(tensor_b, name="tensor_b", average=True)
+                handle_a = hvd.allreduce_async(tensor_a, name="tensor_a", op=hvd.Average)
+                handle_b = hvd.allreduce_async(tensor_b, name="tensor_b", op=hvd.Average)
                 averaged_a = hvd.synchronize(handle_a)
                 averaged_b = hvd.synchronize(handle_b)
 
@@ -2121,8 +2121,8 @@ class TorchTests(unittest.TestCase):
                 else:
                     ret = hvd.join()
             else:
-                handle_a = hvd.allreduce_async(tensor_a, name="tensor_a", average=True)
-                handle_b = hvd.allreduce_async(tensor_b, name="tensor_b", average=True)
+                handle_a = hvd.allreduce_async(tensor_a, name="tensor_a", op=hvd.Average)
+                handle_b = hvd.allreduce_async(tensor_b, name="tensor_b", op=hvd.Average)
                 averaged_a = hvd.synchronize(handle_a)
                 averaged_b = hvd.synchronize(handle_b)
                 if dtype.is_cuda:
