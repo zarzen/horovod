@@ -112,6 +112,8 @@ namespace {
 
 // All the Horovod state that must be stored globally per-process.
 HorovodGlobalState horovod_global;
+sdcc::DataPlaneController data_plane;
+sdcc::RingAllreducePass sdccAllreduce(horovod_global, data_plane);
 
 #if HAVE_MPI
 MPIContext mpi_context;
@@ -993,8 +995,10 @@ Status EnqueueTensorAllreduces(std::vector<std::shared_ptr<OpContext>>& contexts
     e.device = device;
     e.callback = std::move(callbacks[n]);
 
+    // Inject our pass
+    sdccAllreduce.onTensorReady(e, horovod_global);
     entries.push_back(std::move(e));
-
+    
   }
 
   std::string tensors_enqueued;

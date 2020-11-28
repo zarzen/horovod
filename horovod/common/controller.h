@@ -28,6 +28,7 @@
 #include "stall_inspector.h"
 #include "tensor_queue.h"
 #include "timeline.h"
+#include "common.h"
 
 namespace horovod {
 namespace common {
@@ -225,4 +226,103 @@ protected:
 } // namespace common
 } // namespace horovod
 
+namespace sdcc {
+using std::mutex;
+using std::shared_ptr;
+using std::vector;
+using namespace horovod::common;
+
+enum ActionType { REDUCE, SEND, RECV, COPY2DEV, COPY2HOST, COMPRESS, DECOMPRESS };
+enum ConnectionType {NET, P2P, SHM};
+struct Action;
+
+struct Buffer {
+  // id is unique,
+  int id;
+  std::string name;
+  mutex lock;
+  // whether passed fusion queue
+  bool fused = false;
+  int device = CPU_DEVICE_ID;
+
+  int nChunks;
+  vector<shared_ptr<Tensor>> inputTensors;
+  vector<shared_ptr<Tensor>> outputTensors;
+
+  // fused data location
+  shared_ptr<char> data;
+  size_t size;
+
+  // index of the vector represent the id of chunk
+  vector<vector<shared_ptr<Action>>> actionDAGs;
+  int actionCnt;
+};
+
+struct Action {
+  ActionType type;
+  vector<Action*> nextActions; // need be careful to make sure next action is there
+  int preActionsCnt;
+
+  Action(ActionType t, struct Buffer* belongTo) : type(t) {
+    (belongTo->actionCnt)++;
+  }
+  Action(ActionType t, struct Buffer* belongTo, shared_ptr<Action>& dep) : type(t) {
+    dep->nextActions.push_back(this);
+    preActionsCnt++;
+    (belongTo->actionCnt)++;
+  }
+
+  Action(ActionType t, struct Buffer* belongTo, shared_ptr<Action>& dep1, shared_ptr<Action>& dep2)
+      : type(t) {
+    dep1->nextActions.push_back(this);
+    dep2->nextActions.push_back(this);
+    preActionsCnt += 2;
+    (belongTo->actionCnt)++;
+  }
+
+  Action(ActionType t, struct Buffer* belongTo, vector<shared_ptr<Action>> deps)
+      : type(t) {
+    for (auto d : deps) {
+      d->nextActions.push_back(this);
+    }
+    preActionsCnt += deps.size();
+    (belongTo->actionCnt)++;
+  }
+};
+
+struct Connection {
+  ConnectionType type;
+
+};
+
+struct Worker {
+  bool remote = true; // dummy default assume all remote
+  Connection conn;
+};
+
+
+
+class DataPlaneController {
+public:
+  DataPlaneController();
+  Status enqueueBuffer(shared_ptr<Buffer> buff);
+};
+
+class RingAllreducePass {
+  HorovodGlobalState& global_state;
+  DataPlaneController& dataPlane;
+  std::queue<shared_ptr<Buffer>> bufferQ;
+public:
+  RingAllreducePass(HorovodGlobalState& state, DataPlaneController& _dataPlane)
+      : global_state(state), dataPlane(_dataPlane) {}
+  void _fuseTensor();
+  void send(shared_ptr<Buffer>& buff, int chunkIdx, Worker& nextWorker);
+  void recv(shared_ptr<Buffer>& buff, int chunkIdx, Worker& preWorker);
+  void reduce(shared_ptr<Buffer>& buff, int chunkIdx);
+  void _applySimpleAllreduce(shared_ptr<Buffer> buff, int chunkIdx, HorovodGlobalState& global_state);
+  void onTensorReady(TensorTableEntry& tensor,
+                     HorovodGlobalState& global_state);
+  void onBufferReady(shared_ptr<Buffer> buff, HorovodGlobalState& global_state);
+};
+} // namespace sdcc
 #endif // HOROVOD_CONTROL_MANAGER_H

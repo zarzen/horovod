@@ -1001,3 +1001,167 @@ bool Controller::MarkCyclesInTimelinePending() {
 }
 } // namespace common
 } // namespace horovod
+
+
+namespace sdcc {
+
+std::string stringfyActionType(ActionType& type) {
+  switch (type) {
+  case SEND:
+    return "SEND";
+  case RECV:
+    return "RECV";
+  case REDUCE:
+    return "REDUCE";
+  case COPY2DEV:
+    return "COPY2DEV";
+  case COPY2HOST:
+    return "COPY2HOST";
+  case COMPRESS:
+    return "COMPRESS";
+  case DECOMPRESS:
+    return "DECOMPRESS";
+  default:
+    return "<unknow-action-type>-" + std::to_string(type);
+  }
+}
+
+std::string getBufferString(shared_ptr<Buffer>& buff) {
+  std::stringstream ss;
+  ss << "name: " << buff->name << ", id: " << buff->id << ", fused: " << buff->fused
+    << ", device " << buff->device
+    << ", nchunks " << buff->nChunks 
+    << ", inputTensor " << buff->inputTensors.size()
+    << ", outputTensors " << buff->outputTensors.size()
+    << ", actionCnt " << buff->actionCnt << "\n";
+  for (int i = 0; i < buff->actionDAGs.size(); ++i) {
+    ss << "cidx " << i << ": ";
+    for (auto action : buff->actionDAGs[i]) {
+      ss << " [" << stringfyActionType(action->type) << " ";
+      ss << " -> ( ";
+      for (auto next : action->nextActions) {
+        ss << stringfyActionType(next->type) << ",";
+      }
+      ss << " )]; ";
+    }
+    ss << "\n";
+  }
+
+  return ss.str();
+}
+
+DataPlaneController::DataPlaneController() {
+  LOG(TRACE) << "DataPlaneController init";
+};
+
+Status DataPlaneController::enqueueBuffer(shared_ptr<Buffer> buff) {
+  return Status::OK();
+}
+
+void RingAllreducePass::_fuseTensor() {
+  // the simplest one by one of all buffer
+  while (!bufferQ.empty()) {
+    shared_ptr<Buffer> b = bufferQ.front();
+    b->fused = true;
+    onBufferReady(b, global_state);
+    bufferQ.pop();
+  }
+}
+
+void RingAllreducePass::_applySimpleAllreduce(
+    shared_ptr<Buffer> buff, int chunkIdx, HorovodGlobalState& global_state) {
+  int selfRank = global_state.controller->GetRank();
+  int worldSize = global_state.controller->GetSize();
+  // dummy worker, suppose to get from the controller
+  Worker preWorker, nextWorker;
+  // accumulate linear dependencies of a buffer
+  if (selfRank == chunkIdx) {
+    this->send(buff, chunkIdx, nextWorker);
+    this->recv(buff, chunkIdx, preWorker);
+    if (selfRank + 2 % worldSize != chunkIdx)  {
+      // not in stop range
+      this->send(buff, chunkIdx, nextWorker);
+    }
+  } else {
+    this->recv(buff, chunkIdx, preWorker);
+    this->reduce(buff, chunkIdx);
+    this->send(buff, chunkIdx, nextWorker);
+    if (selfRank+1 % worldSize != chunkIdx) {
+      // not in  no-overwrite range, right side of self
+      this->recv(buff, chunkIdx, preWorker);
+      // if received then check whether in stop range
+      if (selfRank + 2 % worldSize != chunkIdx) {
+        // two position right of self
+        this->send(buff, chunkIdx, nextWorker);
+      }
+    }
+  }
+}
+
+
+void RingAllreducePass::onTensorReady(TensorTableEntry& tensor,
+                     HorovodGlobalState& global_state){
+  shared_ptr<Buffer> b = std::make_shared<Buffer>();
+  b->inputTensors.push_back(tensor.tensor);
+  b->name = tensor.tensor_name;
+  b->outputTensors.push_back(tensor.output);
+  b->device = tensor.device;
+  b->fused = false;
+  b->id = -1; // dummy one first
+  b->size = tensor.tensor->size();
+
+  this->bufferQ.push(std::move(b));
+  _fuseTensor();
+}
+
+void RingAllreducePass::onBufferReady(shared_ptr<Buffer> buff, HorovodGlobalState& global_state){
+  buff->nChunks = global_state.controller->GetSize();
+  buff->actionDAGs.reserve(buff->nChunks);
+  for (int i = 0; i < buff->nChunks; i++) {
+    buff->actionDAGs.push_back(std::move(vector<shared_ptr<Action>>()));
+    _applySimpleAllreduce(buff, i, global_state);
+  }
+  // launch on data plane for execution
+  dataPlane.enqueueBuffer(buff);
+  LOG(TRACE) << "selfRank" << global_state.controller->GetRank()
+             << ", created buff DAGs " << getBufferString(buff);
+}
+
+void RingAllreducePass::send(shared_ptr<Buffer>& buff, int chunkIdx, Worker& nextWorker){
+  vector<shared_ptr<Action>>& actionList = buff->actionDAGs[chunkIdx];
+  if (actionList.size() == 0) {
+    // first send, check buff type and nextworker
+    if (buff->device >= 0 && nextWorker.remote) {
+      actionList.push_back(std::make_shared<Action>(COPY2HOST, buff.get()));
+      actionList.push_back(
+          std::make_shared<Action>(SEND, buff.get(), actionList.back()));
+    } else {
+      actionList.push_back(std::make_shared<Action>(SEND, buff.get()));
+    }
+  } else {
+    actionList.push_back(std::make_shared<Action>(SEND, buff.get(), actionList.back()));
+  }
+}
+
+void RingAllreducePass::recv(shared_ptr<Buffer>& buff, int chunkIdx, Worker& preWorker){
+  vector<shared_ptr<Action>>& actionList = buff->actionDAGs[chunkIdx];
+  if (actionList.size() == 0) {
+    if (buff->device >= 0 && preWorker.remote) {
+      actionList.push_back(std::make_shared<Action>(COPY2HOST, buff.get()));
+    }
+  }
+  actionList.push_back(std::make_shared<Action>(RECV, buff.get()));
+}
+
+// recv action must the last action pushed
+void RingAllreducePass::reduce(shared_ptr<Buffer>& buff, int chunkIdx){
+  vector<shared_ptr<Action>>& actionList = buff->actionDAGs[chunkIdx];
+  if (buff->device >= 0) {
+    // the first action of the chunk must be copy2host
+    actionList.push_back(std::make_shared<Action>(REDUCE, buff.get(), actionList[0], actionList.back()));
+  } else {
+    actionList.push_back(std::make_shared<Action>(RECV, buff.get(), actionList.back()));
+  }
+}
+
+}
